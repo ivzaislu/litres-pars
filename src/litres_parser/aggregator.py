@@ -4,7 +4,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .catalog import LitResCatalog, authors_from_art, normalize_key
+from .catalog import authors_from_art, normalize_key
+from .storage import CatalogRepository
 from .client import LitResClient
 from .series import LitResSeriesResolver
 
@@ -70,7 +71,7 @@ class LitResAggregator:
     def __init__(
         self,
         client: LitResClient,
-        catalog: LitResCatalog,
+        catalog: CatalogRepository,
         *,
         cache_ttl_seconds: int = 7 * 24 * 60 * 60,
         max_search_candidates: int = 3,
