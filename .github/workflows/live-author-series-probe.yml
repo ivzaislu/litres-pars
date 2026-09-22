@@ -1,0 +1,52 @@
+name: live-author-series-probe
+
+on:
+  push:
+    branches:
+      - live-foundation-probe
+    paths:
+      - "scripts/live_author_series_probe.py"
+      - ".github/workflows/live-author-series-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  live-author-series:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install parser
+        run: python -m pip install -e .
+      - name: Probe Lukyanenko and Zlotnikov series
+        run: python scripts/live_author_series_probe.py --out author-series-live-results --max-requests 36
+      - name: Print compact author/series report
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("author-series-live-results/report.json")
+          if not p.exists():
+              print("report.json missing")
+              raise SystemExit(0)
+          r=json.loads(p.read_text(encoding="utf-8"))
+          for c in r.get("cases", []):
+              print(json.dumps({
+                  "author": c.get("author"),
+                  "work": c.get("work"),
+                  "art_id": c.get("art_id"),
+                  "selected_series": c.get("selected_series"),
+                  "composition": c.get("composition"),
+              }, ensure_ascii=False, indent=2))
+          print(json.dumps({"requests": r.get("requests")}, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload author-series live results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: litres-author-series-live-probe
+          path: author-series-live-results/
+          retention-days: 14
