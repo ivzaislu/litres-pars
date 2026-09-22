@@ -221,6 +221,7 @@ class Probe:
         direct_author_rows = 0
         direct_author_names = Counter()
         other_series_ids: set[int] = set()
+        direct_by_id: dict[int, dict[str, Any]] = {}
 
         for row in all_rows:
             row_claims = series_claims(row)
@@ -230,6 +231,9 @@ class Probe:
             ]
             if matching:
                 direct.append(row)
+                row_id = int_or_none(row.get("id"))
+                if row_id is not None:
+                    direct_by_id[row_id] = row
                 direct_art_types[str(row.get("art_type"))] += 1
                 row_authors = authors(row)
                 for a in row_authors:
@@ -249,6 +253,64 @@ class Probe:
                 cid = int_or_none(claim.get("id"))
                 if cid is not None and cid != series_id:
                     other_series_ids.add(cid)
+
+        alternative_pairs: list[dict[str, Any]] = []
+        seen_pair_keys: set[tuple[int, int]] = set()
+        for row in direct:
+            row_id = int_or_none(row.get("id"))
+            if row_id is None:
+                continue
+            row_claim = next(
+                (claim for claim in series_claims(row) if int_or_none(claim.get("id")) == series_id),
+                None,
+            )
+            row_pos = row_claim.get("art_order") if isinstance(row_claim, dict) else None
+            if row_pos is None and isinstance(row_claim, dict):
+                row_pos = row_claim.get("number")
+            for alt in dict_rows(row.get("alternative_versions")):
+                alt_id = int_or_none(alt.get("id"))
+                if alt_id is None or alt_id not in direct_by_id:
+                    continue
+                pair_key = tuple(sorted((row_id, alt_id)))
+                if pair_key in seen_pair_keys:
+                    continue
+                seen_pair_keys.add(pair_key)
+                other = direct_by_id[alt_id]
+                other_claim = next(
+                    (
+                        claim for claim in series_claims(other)
+                        if int_or_none(claim.get("id")) == series_id
+                    ),
+                    None,
+                )
+                other_pos = other_claim.get("art_order") if isinstance(other_claim, dict) else None
+                if other_pos is None and isinstance(other_claim, dict):
+                    other_pos = other_claim.get("number")
+                reciprocal = any(
+                    int_or_none(back.get("id")) == row_id
+                    for back in dict_rows(other.get("alternative_versions"))
+                )
+                alternative_pairs.append(
+                    {
+                        "left_id": row_id,
+                        "left_type": row.get("art_type"),
+                        "left_title": row.get("title"),
+                        "left_position": row_pos,
+                        "right_id": alt_id,
+                        "right_type": other.get("art_type"),
+                        "right_title": other.get("title"),
+                        "right_position": other_pos,
+                        "link_type": alt.get("link_type"),
+                        "same_position": row_pos is not None and row_pos == other_pos,
+                        "different_art_type": row.get("art_type") != other.get("art_type"),
+                        "reciprocal": reciprocal,
+                    }
+                )
+
+        cross_format_pairs = [
+            pair for pair in alternative_pairs
+            if pair["same_position"] and pair["different_art_type"] and pair["reciprocal"]
+        ]
 
         nested = dict_rows(detail.get("nested_series"))
         return {
@@ -287,6 +349,11 @@ class Probe:
                 "unique_positions": sorted(set(direct_positions)),
                 "unique_positions_count": len(set(direct_positions)),
                 "direct_rows_without_position": len(direct) - len(direct_positions),
+                "alternative_pairs": alternative_pairs,
+                "cross_format_pair_count": len(cross_format_pairs),
+                "cross_format_positions": sorted(
+                    set(pair["left_position"] for pair in cross_format_pairs if pair["left_position"] is not None)
+                ),
                 "other_series_ids_seen": sorted(other_series_ids)[:200],
             },
         }
@@ -340,6 +407,12 @@ async def async_main(args: argparse.Namespace) -> int:
             failures.append(
                 f"series {case['series_id']}: no direct rows by expected author {case['author']}"
             )
+        art_types = comp.get("art_type_counts") or {}
+        if int(art_types.get("0") or 0) > 0 and int(art_types.get("1") or 0) > 0:
+            if int(comp.get("cross_format_pair_count") or 0) == 0:
+                failures.append(
+                    f"series {case['series_id']}: text/audio rows exist but no reciprocal alternative-version pair was proven"
+                )
 
     if int(report["requests"]["total_requests"]) > args.max_requests:
         failures.append("request budget exceeded")
