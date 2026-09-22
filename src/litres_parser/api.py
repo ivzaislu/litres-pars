@@ -79,6 +79,8 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
+    if service is not None:
+        app.state.series_service = service
 
     async def require_app(
         authorization: str | None = Header(default=None),
