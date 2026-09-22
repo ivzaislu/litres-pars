@@ -137,24 +137,33 @@ async def main_async(args: argparse.Namespace) -> int:
                 "/search",
                 [
                     ("q", case["title"]),
-                    ("limit", 20),
+                    ("limit", 50),
                     ("offset", 0),
                     ("o", "popular"),
                     ("show_unavailable", "true"),
+                    ("types", "text_book"),
+                    ("types", "audiobook"),
                     ("types", "paper_book"),
                 ],
             )
-            search_rows = [x for raw_row in rows(data(search_root)) if (x := unwrap(raw_row)) is not None]
+            raw_search_rows = rows(data(search_root))
+            search_type_counts = Counter(str(raw_row.get("type")) for raw_row in raw_search_rows)
+            search_rows = []
+            for raw_row in raw_search_rows:
+                item = unwrap(raw_row)
+                if item is not None:
+                    search_rows.append((str(raw_row.get("type") or ""), item))
             author_n = norm(case["author"])
             title_n = norm(case["title"])
             matches = []
-            for row in search_rows:
+            for outer_type, row in search_rows:
                 row_authors = authors(row)
                 same_author = any(norm(a) == author_n for a in row_authors)
                 row_title_n = norm(row.get("title"))
                 title_match = row_title_n == title_n or title_n in row_title_n or row_title_n in title_n
-                if same_author and title_match:
+                if outer_type == "paper_book" and same_author and title_match:
                     matches.append({
+                        "search_type": outer_type,
                         "id": int_or_none(row.get("id")),
                         "title": row.get("title"),
                         "art_type": row.get("art_type"),
@@ -171,7 +180,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 **case,
                 "series_rows": len(series_rows),
                 "series_art_type_counts": dict(Counter(str(r.get("art_type")) for r in series_rows)),
-                "paper_search_rows": len(search_rows),
+                "search_rows": len(search_rows),
+                "search_type_counts": dict(sorted(search_type_counts.items())),
                 "paper_matches": matches,
                 "paper_match_ids": [m["id"] for m in matches],
                 "paper_ids_in_series_response": [m["id"] for m in matches if m["in_series_response"]],
