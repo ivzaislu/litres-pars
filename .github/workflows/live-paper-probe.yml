@@ -1,0 +1,41 @@
+name: live-paper-probe
+
+on:
+  push:
+    branches:
+      - live-foundation-probe
+    paths:
+      - "scripts/live_paper_probe.py"
+      - ".github/workflows/live-paper-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  live-paper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Probe paper-book behavior
+        run: python scripts/live_paper_probe.py --out paper-live-results --max-requests 12
+      - name: Print paper summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("paper-live-results/report.json")
+          if p.exists():
+              r=json.loads(p.read_text(encoding="utf-8"))
+              print(json.dumps(r, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload paper probe
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: litres-paper-live-probe
+          path: paper-live-results/
+          retention-days: 14
