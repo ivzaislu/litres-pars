@@ -75,12 +75,16 @@ class LitResAggregator:
         *,
         cache_ttl_seconds: int = 7 * 24 * 60 * 60,
         max_search_candidates: int = 3,
+        max_author_search_candidates: int = 24,
+        max_author_search_pages: int = 3,
     ) -> None:
         self.client = client
         self.catalog = catalog
         self.resolver = LitResSeriesResolver(client, catalog)
         self.cache_ttl_seconds = max(0, int(cache_ttl_seconds))
         self.max_search_candidates = max(1, int(max_search_candidates))
+        self.max_author_search_candidates = max(1, int(max_author_search_candidates))
+        self.max_author_search_pages = max(1, int(max_author_search_pages))
         self._series_locks: dict[int, asyncio.Lock] = {}
         self._resolve_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
 
@@ -113,9 +117,12 @@ class LitResAggregator:
     @staticmethod
     def _author_matches(row: dict[str, Any], expected: str) -> bool:
         key = normalize_key(expected)
-        return bool(key) and any(
-            normalize_key(name) == key for name in authors_from_art(row)
-        )
+        if not key:
+            return False
+        names = authors_from_art(row)
+        if not names and isinstance(row.get("authors"), list):
+            names = [str(name) for name in row["authors"] if str(name).strip()]
+        return any(normalize_key(name) == key for name in names)
 
     @staticmethod
     def _title_matches(row: dict[str, Any], expected: str) -> bool:
@@ -148,13 +155,24 @@ class LitResAggregator:
                     return int(claim["series_id"])
         return None
 
-    async def _remote_series_id(
+    @staticmethod
+    def _matching_series_id(
+        claims: list[dict[str, Any]],
+        expected_series: str,
+    ) -> int | None:
+        for claim in claims:
+            if normalize_key(claim.get("name")) == expected_series:
+                return int(claim["series_id"])
+        return None
+
+    async def _title_search_series_id(
         self,
         *,
         author: str,
         book_title: str,
-        series_name: str,
-    ) -> int:
+        expected_series: str,
+        seen_art_ids: set[int],
+    ) -> int | None:
         rows = await self.client.search(
             book_title,
             limit=20,
@@ -173,17 +191,111 @@ class LitResAggregator:
             )
         )
 
-        expected_series = normalize_key(series_name)
         for row in candidates[: self.max_search_candidates]:
             try:
                 art_id = int(row["id"])
             except (KeyError, TypeError, ValueError):
                 continue
+            seen_art_ids.add(art_id)
             self.catalog.upsert_art(row, detail=False)
             claims = await self.resolver.discover_art_series(art_id)
-            for claim in claims:
-                if normalize_key(claim.get("name")) == expected_series:
-                    return int(claim["series_id"])
+            matched = self._matching_series_id(claims, expected_series)
+            if matched is not None:
+                return matched
+        return None
+
+    async def _author_search_series_id(
+        self,
+        *,
+        author: str,
+        book_title: str,
+        expected_series: str,
+        seen_art_ids: set[int],
+    ) -> int | None:
+        inspected = 0
+        page_size = 50
+
+        for page in range(self.max_author_search_pages):
+            rows = await self.client.search(
+                author,
+                limit=page_size,
+                offset=page * page_size,
+                show_unavailable=True,
+            )
+            if not rows:
+                break
+
+            rows.sort(
+                key=lambda row: (
+                    not self._title_matches(row, book_title),
+                    row.get("art_type") != 0,
+                    int(row.get("id") or 0),
+                )
+            )
+
+            for row in rows:
+                try:
+                    art_id = int(row["id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if art_id in seen_art_ids:
+                    continue
+
+                # Author search can include fuzzy/unrelated rows. Keep rows that
+                # either already identify the requested author or do not expose
+                # author metadata in the search card; detail is authoritative.
+                search_authors = authors_from_art(row)
+                if search_authors and not self._author_matches(row, author):
+                    continue
+
+                seen_art_ids.add(art_id)
+                inspected += 1
+                self.catalog.upsert_art(row, detail=False)
+
+                detail = await self.resolver.ensure_art(art_id)
+                if detail is None or not self._author_matches(detail, author):
+                    if inspected >= self.max_author_search_candidates:
+                        return None
+                    continue
+
+                claims = self.catalog.series_for_art(art_id)
+                matched = self._matching_series_id(claims, expected_series)
+                if matched is not None:
+                    return matched
+
+                if inspected >= self.max_author_search_candidates:
+                    return None
+
+            if len(rows) < page_size:
+                break
+
+        return None
+
+    async def _remote_series_id(
+        self,
+        *,
+        author: str,
+        book_title: str,
+        series_name: str,
+    ) -> int:
+        expected_series = normalize_key(series_name)
+        seen_art_ids: set[int] = set()
+
+        series_id = await self._title_search_series_id(
+            author=author,
+            book_title=book_title,
+            expected_series=expected_series,
+            seen_art_ids=seen_art_ids,
+        )
+        if series_id is None:
+            series_id = await self._author_search_series_id(
+                author=author,
+                book_title=book_title,
+                expected_series=expected_series,
+                seen_art_ids=seen_art_ids,
+            )
+        if series_id is not None:
+            return series_id
 
         raise SeriesNotFoundError(
             f"LitRes series not found for author={author!r}, "
