@@ -1,0 +1,57 @@
+name: live-cross-author-series-probe
+
+on:
+  push:
+    branches:
+      - live-foundation-probe
+    paths:
+      - "scripts/live_cross_author_series_probe.py"
+      - ".github/workflows/live-cross-author-series-probe.yml"
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e .
+      - name: Probe five independent text/audio series
+        run: python scripts/live_cross_author_series_probe.py --out cross-author-series-results --max-requests 20
+      - name: Print compact summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("cross-author-series-results/report.json")
+          if not p.exists():
+              raise SystemExit(0)
+          r=json.loads(p.read_text(encoding="utf-8"))
+          for c in r.get("cases", []):
+              x=c["composition"]
+              print(json.dumps({
+                  "author": c["author"],
+                  "series_id": c["series_id"],
+                  "series_name": c["series_name"],
+                  "direct_rows": x["direct_rows"],
+                  "expanded_rows": x["expanded_rows"],
+                  "art_type_counts": x["art_type_counts"],
+                  "ordered_positions": x["ordered_positions"],
+                  "multi_format_positions": x["multi_format_positions"],
+                  "one_text_many_audio_positions": x["one_text_many_audio_positions"],
+                  "proven_cross_format_pairs": x["proven_cross_format_pairs"],
+                  "proven_pair_positions": x["proven_pair_positions"],
+              }, ensure_ascii=False, indent=2))
+          print(json.dumps({"requests": r.get("requests")}, ensure_ascii=False, indent=2))
+          PY
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: litres-cross-author-series-probe
+          path: cross-author-series-results/
+          retention-days: 14
