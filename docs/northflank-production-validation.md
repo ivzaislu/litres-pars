@@ -114,3 +114,33 @@ live probes:
   derived `works` view for the application.
 
 No parser rule needs to change based on these production checks.
+
+
+## Cache validation: Roman Zlotnikov — Gron
+
+The same `POST /v1/series/resolve` request was executed twice consecutively
+against the deployed Northflank API.
+
+Both responses returned:
+
+```text
+series_id: 587
+name: Грон
+ordered_work_count: 6
+direct_art_count: 12
+unpositioned_direct_art_count: 0
+expanded_art_count: 0
+cached_at: 2026-09-22T05:16:30.581280+00:00
+```
+
+The identical `cached_at` value on both responses confirms that the second
+request was served from the existing PostgreSQL cache and did not refresh the
+series composition from LitRes.
+
+This validates the intended steady-state path:
+
+```text
+client -> Northflank FastAPI -> PostgreSQL -> SeriesInfo
+                                  |
+                                  +-> 0 LitRes requests while cache is fresh
+```
