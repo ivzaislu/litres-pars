@@ -17,26 +17,30 @@ from litres_parser import LitResClient
 CASES = [
     {
         "author": "Сергей Лукьяненко",
-        "work": "Ночной Дозор",
-        "series_hint": "дозор",
-        "slug": "lukyanenko_night_watch",
+        "series_id": 728,
+        "expected_name_hint": "дозор",
+        "label": "Дозоры / Ночной Дозор",
+        "slug": "lukyanenko_watch",
     },
     {
         "author": "Сергей Лукьяненко",
-        "work": "Лабиринт отражений",
-        "series_hint": "лабиринт",
+        "series_id": 1323,
+        "expected_name_hint": "лабиринт",
+        "label": "Лабиринт отражений",
         "slug": "lukyanenko_labyrinth",
     },
     {
         "author": "Роман Злотников",
-        "work": "Грон",
-        "series_hint": "грон",
+        "series_id": 587,
+        "expected_name_hint": "грон",
+        "label": "Грон",
         "slug": "zlotnikov_gron",
     },
     {
         "author": "Роман Злотников",
-        "work": "Арвендейл",
-        "series_hint": "арвендейл",
+        "series_id": 157,
+        "expected_name_hint": "арвендейл",
+        "label": "Арвендейл",
         "slug": "zlotnikov_arvendale",
     },
 ]
@@ -64,13 +68,6 @@ def payload_data(root: Any) -> Any:
 
 def dict_rows(value: Any) -> list[dict[str, Any]]:
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
-
-
-def unwrap_instance(row: Any) -> dict[str, Any] | None:
-    if not isinstance(row, dict):
-        return None
-    nested = row.get("instance")
-    return nested if isinstance(nested, dict) else row
 
 
 def int_or_none(value: Any) -> int | None:
@@ -104,26 +101,6 @@ def authors(row: dict[str, Any]) -> list[str]:
 
 def series_claims(row: dict[str, Any]) -> list[dict[str, Any]]:
     return dict_rows(row.get("series"))
-
-
-def choose_series(claims: list[dict[str, Any]], hint: str) -> dict[str, Any] | None:
-    hint_n = norm(hint)
-    ranked: list[tuple[int, int, dict[str, Any]]] = []
-    for index, claim in enumerate(claims):
-        name = str(claim.get("name") or claim.get("title") or "")
-        name_n = norm(name)
-        score = 0
-        if hint_n and hint_n in name_n:
-            score += 100
-        if claim.get("art_order") is not None or claim.get("number") is not None:
-            score += 20
-        if int_or_none(claim.get("id")) is not None:
-            score += 5
-        ranked.append((score, -index, claim))
-    if not ranked:
-        return None
-    ranked.sort(reverse=True, key=lambda item: (item[0], item[1]))
-    return ranked[0][2]
 
 
 class Recorder:
@@ -187,86 +164,9 @@ class Probe:
         self.save(label, root)
         return root
 
-    async def find_art(self, client: LitResClient, case: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
-        search_root = await self.raw_get(
-            client,
-            f"{case['slug']}_search",
-            "/search",
-            [
-                ("q", case["work"]),
-                ("limit", 10),
-                ("offset", 0),
-                ("o", "popular"),
-                ("show_unavailable", "true"),
-                ("types", "text_book"),
-                ("types", "audiobook"),
-                ("types", "paper_book"),
-            ],
-        )
-        search_rows = [
-            row for raw in dict_rows(payload_data(search_root))
-            if (row := unwrap_instance(raw)) is not None
-        ]
-
+    async def probe_case(self, client: LitResClient, case: dict[str, Any]) -> dict[str, Any]:
+        series_id = int(case["series_id"])
         author_n = norm(case["author"])
-        work_n = norm(case["work"])
-        ranked: list[tuple[int, dict[str, Any]]] = []
-        for row in search_rows:
-            title_n = norm(row.get("title"))
-            names = authors(row)
-            score = 0
-            if title_n == work_n:
-                score += 100
-            elif work_n in title_n or title_n in work_n:
-                score += 40
-            if any(author_n == norm(name) for name in names):
-                score += 100
-            ranked.append((score, row))
-        ranked.sort(reverse=True, key=lambda item: item[0])
-
-        tried = []
-        for score, row in ranked[:4]:
-            art_id = int_or_none(row.get("id"))
-            if art_id is None:
-                continue
-            detail_root = await self.raw_get(
-                client,
-                f"{case['slug']}_art_{art_id}",
-                f"/arts/{art_id}",
-            )
-            detail = payload_data(detail_root)
-            if not isinstance(detail, dict):
-                tried.append({"art_id": art_id, "reason": "detail_missing"})
-                continue
-            detail_authors = authors(detail)
-            same_author = any(author_n == norm(name) for name in detail_authors)
-            claims = series_claims(detail)
-            tried.append(
-                {
-                    "art_id": art_id,
-                    "search_score": score,
-                    "title": detail.get("title"),
-                    "authors": detail_authors,
-                    "same_author": same_author,
-                    "series_count": len(claims),
-                }
-            )
-            if same_author and claims:
-                return detail, {"search_rows": len(search_rows), "tried": tried}
-
-        raise RuntimeError(
-            f"Could not find {case['author']} / {case['work']} with non-empty series claims"
-        )
-
-    async def probe_series(self, client: LitResClient, case: dict[str, str]) -> dict[str, Any]:
-        art, discovery = await self.find_art(client, case)
-        claims = series_claims(art)
-        selected = choose_series(claims, case["series_hint"])
-        if selected is None:
-            raise RuntimeError(f"No series claim for {case['work']}")
-        series_id = int_or_none(selected.get("id"))
-        if series_id is None:
-            raise RuntimeError(f"Chosen series has no id for {case['work']}")
 
         detail_root = await self.raw_get(
             client,
@@ -277,16 +177,19 @@ class Probe:
         if not isinstance(detail, dict):
             raise RuntimeError(f"Series {series_id} detail missing")
 
-        all_rows: list[dict[str, Any]] = []
-        offset = 0
-        pages = 0
-        seen_offsets: set[int] = set()
-        page_summaries = []
+        name = str(detail.get("name") or detail.get("title") or "")
+        name_matches_hint = norm(case["expected_name_hint"]) in norm(name)
 
-        while pages < 3:
+        all_rows: list[dict[str, Any]] = []
+        page_summaries = []
+        offset = 0
+        seen_offsets: set[int] = set()
+
+        for _ in range(3):
             if offset in seen_offsets:
                 raise RuntimeError(f"pagination loop for series {series_id} at {offset}")
             seen_offsets.add(offset)
+
             root = await self.raw_get(
                 client,
                 f"{case['slug']}_series_{series_id}_arts_{offset}",
@@ -297,17 +200,27 @@ class Probe:
             rows = dict_rows(p.get("data"))
             pagination = p.get("pagination") if isinstance(p.get("pagination"), dict) else {}
             n_offset = next_offset(pagination.get("next_page"))
+
             all_rows.extend(rows)
-            page_summaries.append({"offset": offset, "rows": len(rows), "next_offset": n_offset})
-            pages += 1
+            page_summaries.append(
+                {
+                    "offset": offset,
+                    "rows": len(rows),
+                    "next_offset": n_offset,
+                }
+            )
+
             if n_offset is None:
                 break
             offset = n_offset
 
-        direct = []
-        expanded = []
-        positions = []
-        child_series_ids = set()
+        direct: list[dict[str, Any]] = []
+        expanded: list[dict[str, Any]] = []
+        direct_positions: list[Any] = []
+        direct_author_rows = 0
+        direct_author_names = Counter()
+        other_series_ids: set[int] = set()
+
         for row in all_rows:
             row_claims = series_claims(row)
             matching = [
@@ -316,45 +229,37 @@ class Probe:
             ]
             if matching:
                 direct.append(row)
+                row_authors = authors(row)
+                for a in row_authors:
+                    direct_author_names[a] += 1
+                if any(norm(a) == author_n for a in row_authors):
+                    direct_author_rows += 1
                 for claim in matching:
                     pos = claim.get("art_order")
                     if pos is None:
                         pos = claim.get("number")
                     if pos is not None:
-                        positions.append(pos)
+                        direct_positions.append(pos)
             else:
                 expanded.append(row)
+
             for claim in row_claims:
                 cid = int_or_none(claim.get("id"))
                 if cid is not None and cid != series_id:
-                    child_series_ids.add(cid)
+                    other_series_ids.add(cid)
 
+        nested = dict_rows(detail.get("nested_series"))
         return {
             "author": case["author"],
-            "work": case["work"],
-            "art_id": int_or_none(art.get("id")),
-            "art_title": art.get("title"),
-            "art_authors": authors(art),
-            "all_art_series_claims": [
-                {
-                    "id": int_or_none(c.get("id")),
-                    "name": c.get("name") or c.get("title"),
-                    "art_order": c.get("art_order"),
-                    "number": c.get("number"),
-                    "arts_count": c.get("arts_count"),
-                    "unique_arts_count": c.get("unique_arts_count"),
-                }
-                for c in claims
-            ],
-            "selected_series": {
-                "id": series_id,
-                "name": selected.get("name") or selected.get("title"),
-                "claim_art_order": selected.get("art_order"),
-                "claim_number": selected.get("number"),
-                "detail_parent_id": detail.get("parent_id"),
-                "detail_arts_count": detail.get("arts_count"),
-                "detail_unique_arts_count": detail.get("unique_arts_count"),
-                "nested_series_count": len(dict_rows(detail.get("nested_series"))),
+            "label": case["label"],
+            "series_id": series_id,
+            "series_name": name,
+            "name_matches_hint": name_matches_hint,
+            "series_detail": {
+                "parent_id": detail.get("parent_id"),
+                "arts_count": detail.get("arts_count"),
+                "unique_arts_count": detail.get("unique_arts_count"),
+                "nested_series_count": len(nested),
                 "nested_series": [
                     {
                         "id": int_or_none(x.get("id")),
@@ -362,8 +267,8 @@ class Probe:
                         "arts_count": x.get("arts_count"),
                         "unique_arts_count": x.get("unique_arts_count"),
                     }
-                    for x in dict_rows(detail.get("nested_series"))
-                ][:20],
+                    for x in nested[:30]
+                ],
             },
             "composition": {
                 "pages": page_summaries,
@@ -371,28 +276,32 @@ class Probe:
                 "direct_rows": len(direct),
                 "expanded_rows": len(expanded),
                 "direct_ratio": round(len(direct) / len(all_rows), 4) if all_rows else 0.0,
-                "positions_observed": positions[:100],
-                "positions_count": len(positions),
-                "other_series_ids_seen": sorted(child_series_ids)[:100],
+                "direct_author_rows": direct_author_rows,
+                "direct_author_ratio": round(direct_author_rows / len(direct), 4) if direct else 0.0,
+                "direct_author_names": dict(direct_author_names.most_common(20)),
+                "positions_observed": direct_positions[:200],
+                "positions_count": len(direct_positions),
+                "other_series_ids_seen": sorted(other_series_ids)[:200],
             },
-            "discovery": discovery,
         }
 
     async def run(self) -> dict[str, Any]:
         results = []
+        started = utcnow()
         async with LitResClient(
             delay_seconds=0.5,
             retry_backoff_seconds=1.0,
             timeout_seconds=30.0,
-            user_agent="litres-parser-author-series-probe/0.1 (+github.com/ivzaislu/litres-pars)",
+            user_agent="litres-parser-author-series-probe/0.2 (+github.com/ivzaislu/litres-pars)",
         ) as client:
             client._client.event_hooks["request"].append(self.recorder.on_request)
             client._client.event_hooks["response"].append(self.recorder.on_response)
             for case in CASES:
-                results.append(await self.probe_series(client, case))
+                results.append(await self.probe_case(client, case))
 
         return {
-            "started_at": utcnow(),
+            "started_at": started,
+            "finished_at": utcnow(),
             "cases": results,
             "requests": self.recorder.summary(),
             "request_log": self.recorder.requests,
@@ -402,6 +311,7 @@ class Probe:
 async def async_main(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+
     report = await Probe(out_dir, args.max_requests).run()
     (out_dir / "report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2),
@@ -412,10 +322,19 @@ async def async_main(args: argparse.Namespace) -> int:
     failures = []
     for case in report["cases"]:
         comp = case["composition"]
+        if not case["name_matches_hint"]:
+            failures.append(
+                f"series {case['series_id']} unexpected name: {case['series_name']!r}"
+            )
         if int(comp["rows_observed"]) == 0:
-            failures.append(f"{case['author']} / {case['work']}: no series rows")
+            failures.append(f"series {case['series_id']}: no rows")
         if int(comp["direct_rows"]) == 0:
-            failures.append(f"{case['author']} / {case['work']}: no verified direct members")
+            failures.append(f"series {case['series_id']}: no verified direct rows")
+        if int(comp["direct_author_rows"]) == 0:
+            failures.append(
+                f"series {case['series_id']}: no direct rows by expected author {case['author']}"
+            )
+
     if int(report["requests"]["total_requests"]) > args.max_requests:
         failures.append("request budget exceeded")
 
@@ -428,7 +347,7 @@ async def async_main(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="author-series-live-results")
-    parser.add_argument("--max-requests", type=int, default=36)
+    parser.add_argument("--max-requests", type=int, default=24)
     return asyncio.run(async_main(parser.parse_args()))
 
 
