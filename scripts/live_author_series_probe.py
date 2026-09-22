@@ -25,8 +25,8 @@ CASES = [
     {
         "author": "Сергей Лукьяненко",
         "series_id": 1323,
-        "expected_name_hint": "лабиринт",
-        "label": "Лабиринт отражений",
+        "expected_name_hint": "диптаун",
+        "label": "Диптаун (точка входа: Лабиринт отражений)",
         "slug": "lukyanenko_labyrinth",
     },
     {
