@@ -16,15 +16,20 @@ Both catalog endpoints require `Authorization: Bearer <LITRES_APP_TOKEN>`.
 Interactive API docs are disabled. A fresh cached series causes zero LitRes
 requests.
 
-Run locally:
+Northflank production uses a private PostgreSQL addon through `DATABASE_URL`.
+SQLite remains an explicit local-development backend only.
+
+Run with PostgreSQL:
 
 ```bash
+export DATABASE_URL='postgresql://user:password@host:5432/database'
 export LITRES_APP_TOKEN='replace-with-a-long-random-secret'
 uvicorn litres_parser.api:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-See [docs/aggregator-api.md](docs/aggregator-api.md) for the API contract,
-database semantics, caching behavior and deployment notes.
+See [docs/aggregator-api.md](docs/aggregator-api.md) for the API contract and
+[docs/northflank-deployment.md](docs/northflank-deployment.md) for the exact
+Northflank deployment settings.
 
 ---
 
@@ -33,7 +38,8 @@ Standalone async parser/client and local cache for the LitRes Foundation API.
 This project is designed to work **without LitRes partner credentials**. Partner
 catalog APIs are intentionally out of scope. The parser uses the Foundation
 endpoints already used by the original Abred LitRes integration and keeps a
-local SQLite catalog so normal lookups do not repeatedly hit LitRes.
+persistent catalog so normal lookups do not repeatedly hit LitRes. Production
+uses PostgreSQL; SQLite is retained for local development and tests.
 
 It also deliberately contains no Abred database models, CanonicalWork rules,
 reconciliation or application-specific identity decisions.
@@ -42,7 +48,7 @@ reconciliation or application-specific identity decisions.
 
 The normal flow is:
 
-1. Search the local SQLite catalog for an art: **0 requests**.
+1. Search the local catalog for an art: **0 requests**.
 2. Discover its LitRes series claims:
    - **0 requests** when already cached;
    - otherwise one `GET /foundation/api/arts/{id}`.
@@ -67,10 +73,13 @@ prevents one art with several collections/series from causing request fan-out.
 The client handles LitRes' `payload.data` envelope, server-provided pagination,
 temporary-error retries and throttling.
 
-## Local catalog
+## Catalog backends
 
-`LitResCatalog` stores raw LitRes arts, series and art-to-series membership in
-SQLite. `LitResCatalogCrawler` incrementally fills it from `/arts/facets`.
+`PostgresCatalog` is the Northflank production backend selected by
+`DATABASE_URL`. `LitResCatalog` is the SQLite backend for explicit local
+development. Both preserve the same provider-level direct/expanded series
+semantics. `LitResCatalogCrawler` can incrementally fill a configured catalog
+from `/arts/facets`.
 
 The crawler is resumable and segmented by art type/language and Russian leaf
 genres instead of relying on one enormous deep-offset crawl. Art IDs are
@@ -107,5 +116,6 @@ asyncio.run(main())
 ## Tests
 
 The test suite covers request parsing, retries, pagination-loop protection,
-SQLite caching, segmented crawl/resume and the bounded two-step series flow.
-GitHub Actions runs it on Python 3.11, 3.12 and 3.13.
+cache semantics, segmented crawl/resume and the bounded series flow. GitHub
+Actions runs the normal suite on Python 3.11, 3.12 and 3.13 and also runs a
+real PostgreSQL 16 integration job.
