@@ -217,6 +217,7 @@ class Probe:
         direct: list[dict[str, Any]] = []
         expanded: list[dict[str, Any]] = []
         direct_positions: list[Any] = []
+        direct_art_types = Counter()
         direct_author_rows = 0
         direct_author_names = Counter()
         other_series_ids: set[int] = set()
@@ -229,6 +230,7 @@ class Probe:
             ]
             if matching:
                 direct.append(row)
+                direct_art_types[str(row.get("art_type"))] += 1
                 row_authors = authors(row)
                 for a in row_authors:
                     direct_author_names[a] += 1
@@ -279,8 +281,12 @@ class Probe:
                 "direct_author_rows": direct_author_rows,
                 "direct_author_ratio": round(direct_author_rows / len(direct), 4) if direct else 0.0,
                 "direct_author_names": dict(direct_author_names.most_common(20)),
+                "art_type_counts": dict(sorted(direct_art_types.items())),
                 "positions_observed": direct_positions[:200],
                 "positions_count": len(direct_positions),
+                "unique_positions": sorted(set(direct_positions)),
+                "unique_positions_count": len(set(direct_positions)),
+                "direct_rows_without_position": len(direct) - len(direct_positions),
                 "other_series_ids_seen": sorted(other_series_ids)[:200],
             },
         }
