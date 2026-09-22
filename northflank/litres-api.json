@@ -1,0 +1,40 @@
+{
+  "service": {
+    "name": "litres-api",
+    "repository": "https://github.com/ivzaislu/litres-pars",
+    "branch": "northflank-postgres",
+    "buildType": "Dockerfile",
+    "dockerfile": "/Dockerfile",
+    "buildContext": "/",
+    "instances": 1,
+    "port": {
+      "name": "http",
+      "internalPort": 8000,
+      "protocol": "HTTP",
+      "public": true
+    },
+    "healthCheck": {
+      "protocol": "HTTP",
+      "type": "livenessProbe",
+      "path": "/health",
+      "port": 8000,
+      "initialDelaySeconds": 10,
+      "periodSeconds": 30,
+      "timeoutSeconds": 5,
+      "failureThreshold": 3,
+      "successThreshold": 1
+    },
+    "command": "uvicorn litres_parser.api:create_app --factory --host 0.0.0.0 --port 8000"
+  },
+  "postgres": {
+    "addonType": "postgresql",
+    "publicAccess": false,
+    "connectionSecret": "POSTGRES_URI",
+    "applicationAlias": "DATABASE_URL"
+  },
+  "environment": {
+    "LITRES_APP_TOKEN": "<Northflank secret>",
+    "DATABASE_URL": "<alias of PostgreSQL POSTGRES_URI>",
+    "LITRES_CACHE_TTL_SECONDS": "604800"
+  }
+}
