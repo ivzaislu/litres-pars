@@ -14,7 +14,7 @@ APK
  v
 LitRes Aggregator API
  |
- +--> SQLite cache --------> normalized SeriesInfo
+ +--> PostgreSQL cache -----> normalized SeriesInfo
  |
  +--> LitRes Foundation API (cache miss / stale cache only)
         |
@@ -181,18 +181,21 @@ for grouping because it is incomplete in some live series.
 
 ## Running the server
 
-Required:
+Required for Northflank/server mode:
 
 ```bash
+export DATABASE_URL='postgresql://user:password@host:5432/database'
 export LITRES_APP_TOKEN='replace-with-a-long-random-secret'
 ```
 
 Optional:
 
 ```bash
-export LITRES_DB_PATH='/data/litres-aggregator.sqlite3'
 export LITRES_CACHE_TTL_SECONDS='604800'
 ```
+
+For explicit local development only, `LITRES_DB_PATH` can select SQLite when
+`DATABASE_URL` is absent.
 
 Run:
 
@@ -200,10 +203,10 @@ Run:
 uvicorn litres_parser.api:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-Use one application process while SQLite is the backing store. WAL mode is
-enabled. If the service later needs multiple workers/instances, move the
-repository layer to PostgreSQL rather than sharing one SQLite file across a
-cluster.
+Northflank production uses `PostgresCatalog`. Missing tables and indexes are
+created idempotently at startup. The service does not silently fall back to
+SQLite when neither `DATABASE_URL` nor an explicit local SQLite path is
+configured.
 
 ## Authentication boundary
 
@@ -236,3 +239,8 @@ The aggregator serializes concurrent cache misses:
 
 Concurrent requests for the same uncached series therefore do not intentionally
 fan out into duplicate LitRes composition downloads inside one server process.
+
+
+## Northflank
+
+See [`docs/northflank-deployment.md`](northflank-deployment.md). The repository also contains `northflank/litres-api.json` and `northflank/health-check.json` with the exact application-specific service settings.
