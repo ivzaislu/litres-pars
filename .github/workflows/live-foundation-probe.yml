@@ -7,7 +7,6 @@ on:
     paths:
       - "scripts/live_foundation_probe.py"
       - ".github/workflows/live-foundation-probe.yml"
-      - "src/litres_parser/**"
   workflow_dispatch:
 
 jobs:
