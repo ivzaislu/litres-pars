@@ -1,4 +1,4 @@
-from .catalog import LitResCatalog, authors_from_art, normalize_key, series_claims_from_art
+from .aggregator import LitResAggregator, SeriesNotFoundError\nfrom .catalog import LitResCatalog, authors_from_art, normalize_key, series_claims_from_art
 from .client import (
     DEFAULT_API_BASE_URL,
     DEFAULT_WEB_BASE_URL,
