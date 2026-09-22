@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .catalog import LitResCatalog
+from .storage import CatalogRepository
 from .client import LitResClient
 
 
@@ -18,7 +18,7 @@ class LitResSeriesResolver:
     It never fans out over every series claim automatically.
     """
 
-    def __init__(self, client: LitResClient, catalog: LitResCatalog) -> None:
+    def __init__(self, client: LitResClient, catalog: CatalogRepository) -> None:
         self.client = client
         self.catalog = catalog
 
