@@ -168,6 +168,48 @@ that must equal the number of direct rows returned by
 The crawler/database should record the reported counter and the observed direct
 membership independently.
 
+## Format accounting correction
+
+The composition endpoint returns **art rows**, not one row per logical work.
+
+The live sample makes this explicit:
+
+| Series | direct art rows | art_type=0 text | art_type=1 audio | unique ordered positions | rows without position |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Дозоры | 61 | 30 | 31 | 6 | 49 |
+| Диптаун | 6 | 3 | 3 | 3 | 0 |
+| Грон | 12 | 6 | 6 | 6 | 0 |
+| Арвендейл | 13 | 8 | 5 | 8 | 0 |
+
+For the simple ordered series this explains the apparent over-count:
+
+- `Диптаун`: 3 logical positions, each represented by text + audio = 6 art rows.
+- `Грон`: 6 logical positions, each represented by text + audio = 12 art rows.
+- `Арвендейл`: 8 logical positions; positions 1–5 have both text and audio,
+  positions 6–8 currently have only the text art in this response = 13 art rows.
+
+Therefore the parser must distinguish:
+
+1. **art rows / editions / formats** — raw LitRes objects, always preserved;
+2. **series position** — provider `art_order` / `number`;
+3. **logical work slot** — a higher-level grouping derived from position and
+   provider relations, never from row count alone.
+
+In these four live `/series/{id}/arts` samples the observed `art_type` values
+were only:
+
+- `0` — text
+- `1` — audio
+
+LitRes search also supports a `paper_book` type, but these particular series
+composition samples did **not** expose a distinct paper art type. We should test
+paper editions separately before defining how they map into the same logical
+work slot.
+
+The earlier statement that “more rows than books” is therefore not itself an API
+inconsistency. The meaningful comparison is between logical positions /
+`unique_arts_count` and format-specific art rows.
+
 ## Cross-series conclusion
 
 Across these four series, the strongest observed rule is:
