@@ -147,6 +147,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 ],
             )
             raw_search_rows = rows(data(search_root))
+            extra = payload(search_root).get("extra")
+            counters = extra.get("counters") if isinstance(extra, dict) and isinstance(extra.get("counters"), dict) else {}
             search_type_counts = Counter(str(raw_row.get("type")) for raw_row in raw_search_rows)
             search_rows = []
             for raw_row in raw_search_rows:
@@ -182,6 +184,8 @@ async def main_async(args: argparse.Namespace) -> int:
                 "series_art_type_counts": dict(Counter(str(r.get("art_type")) for r in series_rows)),
                 "search_rows": len(search_rows),
                 "search_type_counts": dict(sorted(search_type_counts.items())),
+                "search_counters": counters,
+                "paper_book_counter": int_or_none(counters.get("paper_book")),
                 "paper_matches": matches,
                 "paper_match_ids": [m["id"] for m in matches],
                 "paper_ids_in_series_response": [m["id"] for m in matches if m["in_series_response"]],
