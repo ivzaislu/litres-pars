@@ -320,6 +320,73 @@ class LiveProbe:
             "detail_comparisons": comparisons,
         }
 
+    async def _probe_series_arts_page(
+        self,
+        client: LitResClient,
+        series_id: int,
+        *,
+        label: str,
+        show_unavailable: bool,
+        follow_one_next_page: bool = False,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"offset": 0, "limit": 100}
+        if show_unavailable:
+            params["show_unavailable"] = "true"
+        first_root = await self.get(
+            client,
+            f"{label}_page_0",
+            f"/series/{series_id}/arts",
+            params,
+        )
+        p = payload(first_root)
+        rows = dict_rows(p.get("data"))
+        pagination = p.get("pagination") if isinstance(p.get("pagination"), dict) else {}
+        n_offset = next_offset(pagination.get("next_page"))
+        second_rows: list[dict[str, Any]] = []
+
+        if follow_one_next_page and n_offset is not None:
+            params2: dict[str, Any] = {"offset": n_offset, "limit": 100}
+            if show_unavailable:
+                params2["show_unavailable"] = "true"
+            second_root = await self.get(
+                client,
+                f"{label}_page_{n_offset}",
+                f"/series/{series_id}/arts",
+                params2,
+            )
+            second_rows = dict_rows(payload_data(second_root))
+
+        all_rows = rows + second_rows
+        direct_claims = 0
+        position_fields = Counter()
+        claim_keys: set[str] = set()
+        for row in all_rows:
+            matching = []
+            for claim in series_claims(row):
+                claim_keys.update(str(key) for key in claim)
+                if int_or_none(claim.get("id")) == series_id:
+                    matching.append(claim)
+            if matching:
+                direct_claims += 1
+                for claim in matching:
+                    if claim.get("art_order") is not None:
+                        position_fields["art_order"] += 1
+                    if claim.get("number") is not None:
+                        position_fields["number"] += 1
+
+        return {
+            "first_page_rows": len(rows),
+            "second_page_rows": len(second_rows),
+            "rows_observed": len(all_rows),
+            "next_offset": n_offset,
+            "direct_claim_rows": direct_claims,
+            "rows_without_requested_claim": len(all_rows) - direct_claims,
+            "direct_claim_ratio": round(direct_claims / len(all_rows), 4) if all_rows else 0.0,
+            "position_fields_seen": dict(position_fields),
+            "member_item_keys": key_union(all_rows),
+            "member_series_claim_keys": sorted(claim_keys),
+        }
+
     async def probe_series(self, client: LitResClient) -> None:
         series_id = None
         source_art_id = None
@@ -342,63 +409,79 @@ class LiveProbe:
 
         if series_id is None:
             series_id = 1505
-            self.report["warnings"].append("No series claim found in tested art details; falling back to historical series_id=1505")
+            self.report["warnings"].append(
+                "No series claim found in tested art details; falling back to historical series_id=1505"
+            )
 
         detail_root = await self.get(client, f"series_{series_id}", f"/series/{series_id}")
         detail = payload_data(detail_root)
+        nested = dict_rows(detail.get("nested_series")) if isinstance(detail, dict) else []
 
-        first_root = await self.get(
+        normal = await self._probe_series_arts_page(
             client,
-            f"series_{series_id}_arts_page_0",
-            f"/series/{series_id}/arts",
-            {"offset": 0, "limit": 100},
+            series_id,
+            label=f"series_{series_id}_arts_default",
+            show_unavailable=False,
+            follow_one_next_page=True,
         )
-        p = payload(first_root)
-        first_rows = dict_rows(p.get("data"))
-        pagination = p.get("pagination") if isinstance(p.get("pagination"), dict) else {}
-        n_offset = next_offset(pagination.get("next_page"))
+        including_unavailable = await self._probe_series_arts_page(
+            client,
+            series_id,
+            label=f"series_{series_id}_arts_with_unavailable",
+            show_unavailable=True,
+            follow_one_next_page=True,
+        )
 
-        second_rows: list[dict[str, Any]] = []
-        if n_offset is not None:
-            second_root = await self.get(
+        nested_results = []
+        for nested_row in nested[:2]:
+            nested_id = int_or_none(nested_row.get("id"))
+            if nested_id is None:
+                continue
+            nested_detail_root = await self.get(
                 client,
-                f"series_{series_id}_arts_page_{n_offset}",
-                f"/series/{series_id}/arts",
-                {"offset": n_offset, "limit": 100},
+                f"series_{nested_id}",
+                f"/series/{nested_id}",
             )
-            second_rows = dict_rows(payload_data(second_root))
-
-        all_rows = first_rows + second_rows
-        membership_hits = 0
-        position_fields = Counter()
-        series_claim_keys: set[str] = set()
-        for row in all_rows:
-            matching = []
-            for claim in series_claims(row):
-                series_claim_keys.update(str(key) for key in claim)
-                if int_or_none(claim.get("id")) == series_id:
-                    matching.append(claim)
-            if matching:
-                membership_hits += 1
-                for claim in matching:
-                    if claim.get("art_order") is not None:
-                        position_fields["art_order"] += 1
-                    if claim.get("number") is not None:
-                        position_fields["number"] += 1
+            nested_detail = payload_data(nested_detail_root)
+            nested_arts = await self._probe_series_arts_page(
+                client,
+                nested_id,
+                label=f"series_{nested_id}_arts_with_unavailable",
+                show_unavailable=True,
+                follow_one_next_page=True,
+            )
+            nested_results.append(
+                {
+                    "series_id": nested_id,
+                    "name": nested_row.get("name"),
+                    "parent_id": nested_detail.get("parent_id") if isinstance(nested_detail, dict) else None,
+                    "arts_count": nested_detail.get("arts_count") if isinstance(nested_detail, dict) else None,
+                    "unique_arts_count": nested_detail.get("unique_arts_count") if isinstance(nested_detail, dict) else None,
+                    "nested_series_count": len(dict_rows(nested_detail.get("nested_series"))) if isinstance(nested_detail, dict) else None,
+                    "arts_probe": nested_arts,
+                }
+            )
 
         self.report["endpoints"]["series"] = {
             "source_art_id": source_art_id,
             "series_id": series_id,
             "detail_found": isinstance(detail, dict),
             "detail_keys": sorted(detail.keys()) if isinstance(detail, dict) else [],
-            "first_page_rows": len(first_rows),
-            "second_page_rows": len(second_rows),
-            "next_offset": n_offset,
-            "member_item_keys": key_union(all_rows),
-            "member_series_claim_keys": sorted(series_claim_keys),
-            "members_with_requested_series_claim": membership_hits,
-            "members_tested": len(all_rows),
-            "position_fields_seen": dict(position_fields),
+            "arts_count": detail.get("arts_count") if isinstance(detail, dict) else None,
+            "unique_arts_count": detail.get("unique_arts_count") if isinstance(detail, dict) else None,
+            "parent_id": detail.get("parent_id") if isinstance(detail, dict) else None,
+            "nested_series": [
+                {
+                    "id": int_or_none(row.get("id")),
+                    "name": row.get("name"),
+                    "arts_count": row.get("arts_count"),
+                    "unique_arts_count": row.get("unique_arts_count"),
+                }
+                for row in nested
+            ],
+            "default_composition": normal,
+            "composition_with_unavailable": including_unavailable,
+            "nested_probes": nested_results,
         }
 
     async def probe_genres(self, client: LitResClient) -> None:
@@ -457,12 +540,20 @@ class LiveProbe:
             "facets_exposes_series_field": int(facets.get("rows_with_series_field") or 0) > 0,
             "facets_exposes_nonempty_series": int(facets.get("rows_with_nonempty_series") or 0) > 0,
             "facets_matches_detail_series_for_all_compared": bool(comparable) and len(exact) == len(comparable),
-            "series_arts_rows_carry_requested_series_claim": (
-                int(series.get("members_tested") or 0) > 0
-                and int(series.get("members_with_requested_series_claim") or 0)
-                == int(series.get("members_tested") or 0)
+            "series_arts_rows_all_carry_requested_series_claim": (
+                int((series.get("composition_with_unavailable") or {}).get("rows_observed") or 0) > 0
+                and int((series.get("composition_with_unavailable") or {}).get("rows_without_requested_claim") or 0) == 0
             ),
-            "series_detail_is_not_required_to_fetch_composition": int(series.get("members_tested") or 0) > 0,
+            "series_arts_expands_beyond_direct_membership": (
+                int((series.get("composition_with_unavailable") or {}).get("rows_without_requested_claim") or 0) > 0
+            ),
+            "show_unavailable_changes_series_result_count": (
+                int((series.get("default_composition") or {}).get("rows_observed") or 0)
+                != int((series.get("composition_with_unavailable") or {}).get("rows_observed") or 0)
+            ),
+            "series_detail_is_not_required_to_fetch_composition": (
+                int((series.get("composition_with_unavailable") or {}).get("rows_observed") or 0) > 0
+            ),
         }
 
 
@@ -483,7 +574,9 @@ async def async_main(args: argparse.Namespace) -> int:
         hard_failures.append("facets returned no parsable rows")
     if not report.get("endpoints", {}).get("arts_detail", {}).get("working_ids"):
         hard_failures.append("no tested art detail was available")
-    if int(report.get("endpoints", {}).get("series", {}).get("members_tested") or 0) == 0:
+    if int(
+        (report.get("endpoints", {}).get("series", {}).get("composition_with_unavailable") or {}).get("rows_observed") or 0
+    ) == 0:
         hard_failures.append("series composition returned no rows")
 
     if hard_failures:
