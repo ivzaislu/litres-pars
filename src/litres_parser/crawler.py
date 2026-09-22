@@ -82,7 +82,7 @@ class LitResCatalogCrawler:
         ]
 
         if not art_types or not languages:
-            return [{"path": "/arts/facets", "filters": {}, "label": "all"}]
+            raise RuntimeError("LitRes facets did not expose art_types/languages for safe segmentation")
 
         plan: list[dict[str, Any]] = []
         for art_type in sorted(set(art_types)):
@@ -118,15 +118,11 @@ class LitResCatalogCrawler:
                         }
                     )
             else:
-                plan.append(
-                    {
-                        "path": "/arts/facets",
-                        "filters": {"art_types": "text_book", "languages": "ru"},
-                        "label": "text_book/ru",
-                    }
-                )
+                raise RuntimeError("LitRes genre tree returned no leaf genres for safe Russian text segmentation")
 
-        return plan or [{"path": "/arts/facets", "filters": {}, "label": "all"}]
+        if not plan:
+            raise RuntimeError("LitRes segmented crawl plan is empty")
+        return plan
 
     async def run_chunk(
         self,
