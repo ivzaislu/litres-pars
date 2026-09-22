@@ -180,6 +180,7 @@ class LitResClient:
         *,
         limit: int = MAX_SERIES_PAGE_SIZE,
         max_pages: int | None = None,
+        show_unavailable: bool = False,
     ) -> list[dict[str, Any]]:
         page_size = max(1, min(MAX_SERIES_PAGE_SIZE, int(limit)))
         result: list[dict[str, Any]] = []
@@ -196,7 +197,11 @@ class LitResClient:
 
             root = await self._get_json(
                 f"/series/{int(series_id)}/arts",
-                params={"limit": page_size, "offset": offset},
+                params={
+                    "limit": page_size,
+                    "offset": offset,
+                    "show_unavailable": "true" if show_unavailable else "false",
+                },
             )
             payload = self.payload(root)
             if payload is None:
