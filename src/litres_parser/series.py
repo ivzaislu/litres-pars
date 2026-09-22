@@ -75,16 +75,28 @@ class LitResSeriesResolver:
         """
         series_id = int(series_id)
         cached_series = self.catalog.get_series(series_id)
-        if cached_series is not None and cached_series.get("complete") and not refresh:
+        cache_has_detail = bool(cached_series and cached_series.get("detail_cached"))
+        if (
+            cached_series is not None
+            and cached_series.get("complete")
+            and not refresh
+            and (not fetch_detail or cache_has_detail)
+        ):
             return self.catalog.series_arts(series_id)
 
         detail = None
-        if fetch_detail:
+        if fetch_detail and (refresh or not cache_has_detail):
             detail = await self.client.get_series(series_id)
             if detail is not None:
-                self.catalog.upsert_series(detail, complete=False)
+                self.catalog.upsert_series(detail, complete=None, detail=True)
 
-        rows = await self.client.get_series_arts(series_id)
+        # If composition was already complete, fetching missing series detail
+        # must not cause another composition request.
+        cached_series = self.catalog.get_series(series_id)
+        if cached_series is not None and cached_series.get("complete") and not refresh:
+            return self.catalog.series_arts(series_id)
+
+        rows = await self.client.get_series_arts(series_id, show_unavailable=True)
         self.catalog.replace_series_arts(
             series_id,
             rows,
