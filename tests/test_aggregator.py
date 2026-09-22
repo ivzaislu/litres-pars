@@ -243,3 +243,286 @@ def test_series_info_keeps_multiple_audio_editions_in_one_position():
         "audio",
         "audio",
     ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_series_falls_back_to_author_search_when_title_search_misses():
+    calls = []
+
+    async def handler(request: httpx.Request):
+        calls.append((request.url.path, dict(request.url.params)))
+
+        if request.url.path.endswith("/search"):
+            query = request.url.params["q"]
+            if query == "Книга из источника":
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": {
+                            "data": [
+                                {
+                                    "instance": {
+                                        "id": 10,
+                                        "title": "Совсем другая книга",
+                                        "art_type": 0,
+                                        "persons": [
+                                            {
+                                                "role": "author",
+                                                "full_name": "Нужный Автор",
+                                            }
+                                        ],
+                                        "series": [],
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                )
+            if query == "Нужный Автор":
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": {
+                            "data": [
+                                {
+                                    "instance": {
+                                        "id": 20,
+                                        "title": "Название в LitRes отличается",
+                                        "art_type": 0,
+                                        "persons": [
+                                            {
+                                                "role": "author",
+                                                "full_name": "Нужный Автор",
+                                            }
+                                        ],
+                                        "series": [],
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                )
+            raise AssertionError(f"unexpected search query: {query}")
+
+        if request.url.path.endswith("/arts/20"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": {
+                            "id": 20,
+                            "title": "Название в LitRes отличается",
+                            "art_type": 0,
+                            "persons": [
+                                {
+                                    "role": "author",
+                                    "full_name": "Нужный Автор",
+                                }
+                            ],
+                            "series": [
+                                {
+                                    "id": 900,
+                                    "name": "Нужная серия!",
+                                    "art_order": 2,
+                                }
+                            ],
+                        }
+                    }
+                },
+            )
+
+        if request.url.path.endswith("/series/900"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": {
+                            "id": 900,
+                            "name": "Нужная серия!",
+                            "arts_count": 1,
+                            "unique_arts_count": 1,
+                            "parent_id": None,
+                            "nested_series": [],
+                        }
+                    }
+                },
+            )
+
+        if request.url.path.endswith("/series/900/arts"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": [
+                            {
+                                "id": 20,
+                                "title": "Название в LitRes отличается",
+                                "art_type": 0,
+                                "persons": [
+                                    {
+                                        "role": "author",
+                                        "full_name": "Нужный Автор",
+                                    }
+                                ],
+                                "series": [
+                                    {
+                                        "id": 900,
+                                        "name": "Нужная серия!",
+                                        "art_order": 2,
+                                    }
+                                ],
+                            }
+                        ],
+                        "pagination": {"next_page": None},
+                    }
+                },
+            )
+
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with LitResCatalog(":memory:") as catalog:
+        async with LitResClient(
+            delay_seconds=0,
+            retry_backoff_seconds=0,
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            service = LitResAggregator(client, catalog, cache_ttl_seconds=3600)
+
+            result = await service.resolve_series(
+                author="Нужный Автор",
+                book_title="Книга из источника",
+                series_name="Нужная серия",
+            )
+
+    assert result["series_id"] == 900
+    assert result["name"] == "Нужная серия!"
+    assert result["works"][0]["position"] == 2
+    assert [params.get("q") for path, params in calls if path.endswith("/search")] == [
+        "Книга из источника",
+        "Нужный Автор",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_author_fallback_verifies_author_from_art_detail():
+    detail_calls = []
+
+    async def handler(request: httpx.Request):
+        if request.url.path.endswith("/search"):
+            query = request.url.params["q"]
+            if query == "Источник":
+                return httpx.Response(200, json={"payload": {"data": []}})
+            if query == "Автор":
+                return httpx.Response(
+                    200,
+                    json={
+                        "payload": {
+                            "data": [
+                                {
+                                    "instance": {
+                                        "id": 30,
+                                        "title": "Похожее",
+                                        "art_type": 0,
+                                        "series": [],
+                                    }
+                                },
+                                {
+                                    "instance": {
+                                        "id": 31,
+                                        "title": "Нужное",
+                                        "art_type": 0,
+                                        "series": [],
+                                    }
+                                },
+                            ]
+                        }
+                    },
+                )
+
+        if request.url.path.endswith("/arts/30"):
+            detail_calls.append(30)
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": {
+                            "id": 30,
+                            "title": "Похожее",
+                            "persons": [
+                                {"role": "author", "full_name": "Другой Автор"}
+                            ],
+                            "series": [{"id": 901, "name": "Серия", "art_order": 1}],
+                        }
+                    }
+                },
+            )
+
+        if request.url.path.endswith("/arts/31"):
+            detail_calls.append(31)
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": {
+                            "id": 31,
+                            "title": "Нужное",
+                            "persons": [
+                                {"role": "author", "full_name": "Автор"}
+                            ],
+                            "series": [{"id": 902, "name": "Серия", "art_order": 1}],
+                        }
+                    }
+                },
+            )
+
+        if request.url.path.endswith("/series/902"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": {
+                            "id": 902,
+                            "name": "Серия",
+                            "nested_series": [],
+                        }
+                    }
+                },
+            )
+
+        if request.url.path.endswith("/series/902/arts"):
+            return httpx.Response(
+                200,
+                json={
+                    "payload": {
+                        "data": [
+                            {
+                                "id": 31,
+                                "title": "Нужное",
+                                "persons": [
+                                    {"role": "author", "full_name": "Автор"}
+                                ],
+                                "series": [{"id": 902, "name": "Серия", "art_order": 1}],
+                            }
+                        ],
+                        "pagination": {"next_page": None},
+                    }
+                },
+            )
+
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    with LitResCatalog(":memory:") as catalog:
+        async with LitResClient(
+            delay_seconds=0,
+            retry_backoff_seconds=0,
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            service = LitResAggregator(client, catalog, cache_ttl_seconds=3600)
+            result = await service.resolve_series(
+                author="Автор",
+                book_title="Источник",
+                series_name="Серия",
+            )
+
+    assert result["series_id"] == 902
+    assert detail_calls == [30, 31]
