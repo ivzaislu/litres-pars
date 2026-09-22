@@ -1,5 +1,33 @@
 # litres-pars
 
+This branch contains a **cache-first LitRes series aggregator API for the APK**.
+
+The mobile application talks only to this service. LitRes Foundation is an
+internal upstream provider used by the server on cache misses and
+server-controlled refreshes.
+
+Main app endpoints:
+
+- `POST /v1/series/resolve` — resolve a series from author + known book +
+  series name;
+- `GET /v1/series/{series_id}` — return normalized cached series information.
+
+Both catalog endpoints require `Authorization: Bearer <LITRES_APP_TOKEN>`.
+Interactive API docs are disabled. A fresh cached series causes zero LitRes
+requests.
+
+Run locally:
+
+```bash
+export LITRES_APP_TOKEN='replace-with-a-long-random-secret'
+uvicorn litres_parser.api:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+See [docs/aggregator-api.md](docs/aggregator-api.md) for the API contract,
+database semantics, caching behavior and deployment notes.
+
+---
+
 Standalone async parser/client and local cache for the LitRes Foundation API.
 
 This project is designed to work **without LitRes partner credentials**. Partner
