@@ -1,0 +1,15 @@
+{
+  "healthChecks": [
+    {
+      "protocol": "HTTP",
+      "type": "livenessProbe",
+      "path": "/health",
+      "port": 8000,
+      "initialDelaySeconds": 10,
+      "periodSeconds": 30,
+      "timeoutSeconds": 5,
+      "failureThreshold": 3,
+      "successThreshold": 1
+    }
+  ]
+}
