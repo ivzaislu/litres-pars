@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from .aggregator import LitResAggregator, SeriesNotFoundError
-from .catalog import LitResCatalog
+from .storage import create_catalog
 from .client import LitResClient
 
 
@@ -25,6 +25,7 @@ def create_app(
     service: LitResAggregator | None = None,
     app_token: str | None = None,
     catalog_path: str | Path | None = None,
+    database_url: str | None = None,
     cache_ttl_seconds: int | None = None,
 ) -> FastAPI:
     """Create the app-only aggregator API.
@@ -32,18 +33,15 @@ def create_app(
     Run with:
         uvicorn litres_parser.api:create_app --factory --host 0.0.0.0 --port 8000
 
-    Required environment variable in normal server mode:
+    Required environment variables in Northflank server mode:
         LITRES_APP_TOKEN
+        DATABASE_URL
     """
     expected_token = app_token or os.environ.get("LITRES_APP_TOKEN")
     if not expected_token:
         raise RuntimeError("LITRES_APP_TOKEN is required")
 
-    db_path = str(
-        catalog_path
-        or os.environ.get("LITRES_DB_PATH")
-        or "litres-aggregator.sqlite3"
-    )
+    configured_database_url = database_url or os.environ.get("DATABASE_URL")
     ttl = int(
         cache_ttl_seconds
         if cache_ttl_seconds is not None
@@ -57,7 +55,10 @@ def create_app(
             yield
             return
 
-        catalog = LitResCatalog(db_path)
+        catalog = create_catalog(
+            database_url=configured_database_url,
+            sqlite_path=catalog_path,
+        )
         client = LitResClient(user_agent="litres-aggregator/0.1")
         aggregator = LitResAggregator(
             client,
