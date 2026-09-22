@@ -188,7 +188,7 @@ class LitResCatalog:
             self.db.execute("DELETE FROM series_arts WHERE art_id = ?", (art_id,))
         for claim in claims:
             series_id = int(claim["id"])
-            name = str(claim.get("name") or "").strip()
+            name = str(claim.get("name") or claim.get("title") or "").strip()
             self.upsert_series(
                 {"id": series_id, "name": name},
                 complete=None,
@@ -205,7 +205,7 @@ class LitResCatalog:
                 (
                     series_id,
                     art_id,
-                    _float_or_none(claim.get("art_order")),
+                    _float_or_none(claim.get("art_order") if claim.get("art_order") is not None else claim.get("number")),
                     json.dumps(claim, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
@@ -301,7 +301,7 @@ class LitResCatalog:
                     (
                         series_id,
                         art_id,
-                        _float_or_none(claim.get("art_order")),
+                        _float_or_none(claim.get("art_order") if claim.get("art_order") is not None else claim.get("number")),
                         json.dumps(claim, ensure_ascii=False, separators=(",", ":")),
                     ),
                 )
