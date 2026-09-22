@@ -55,27 +55,56 @@ Content-Type: application/json
 
 The server first checks its local catalog.
 
-On a cold miss it:
+On a cold miss it uses a two-stage resolver.
 
-1. searches LitRes for the known book;
-2. verifies the author;
-3. loads at most a bounded number of candidate art details;
+Fast path:
+
+1. searches LitRes for the known book title;
+2. verifies the author and a compatible title;
+3. loads at most a small bounded number of candidate art details;
 4. selects the provider series claim whose normalized name matches
-   `series_name`;
-5. loads series detail;
-6. loads the complete selected series composition with
-   `show_unavailable=true`;
-7. caches the result.
+   `series_name`.
 
-The normal cold path is four requests when the first verified search candidate
-is correct:
+Fallback path, used only when the fast path fails:
+
+1. searches LitRes by author;
+2. walks a bounded number of author-search results;
+3. opens art detail for each candidate;
+4. verifies the author from authoritative art detail;
+5. scans the art's provider `series[]` claims for the normalized requested
+   `series_name`;
+6. stops as soon as the matching provider series is found.
+
+After either path resolves a `series_id`, the server loads series detail and
+the complete selected composition with `show_unavailable=true`, then caches
+the result.
+
+The normal successful cold path remains four requests when the title search
+hits immediately:
 
 ```text
-/search
+/search?q=<book title>
 /arts/{art_id}
 /series/{series_id}
 /series/{series_id}/arts
 ```
+
+A title miss adds author fallback work:
+
+```text
+/search?q=<book title>
+/search?q=<author>
+/arts/{candidate}
+/arts/{candidate}
+...
+/series/{series_id}
+/series/{series_id}/arts
+```
+
+The fallback is deliberately bounded. It currently inspects at most 24 author
+candidates across at most three 50-row search pages. It is only entered after
+the fast path misses, so successful common requests keep the original low-cost
+behavior.
 
 Composition pagination adds requests only when LitRes supplies a
 `pagination.next_page`.
