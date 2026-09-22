@@ -17,7 +17,9 @@ CASES = [
     {"author": "Вадим Панов", "series_id": 2560, "name_hint": "Тайный Город", "slug": "panov_secret_city"},
     {"author": "Алексей Пехов", "series_id": 2827, "name_hint": "Хроники Сиалы", "slug": "pehov_siala"},
     {"author": "Сергей Тармашев", "series_id": 11402, "name_hint": "Древний", "slug": "tarmashev_ancient"},
-    {"author": "Борис Акунин", "series_id": 2025, "name_hint": "Фандорин", "slug": "akunin_fandorin"},
+    {"author": "Дмитрий Емец", "series_id": 2574, "name_hint": "Таня Гроттер", "slug": "emets_tanya_grotter"},
+    {"author": "Анджей Сапковский", "series_id": 370, "name_hint": "Ведьмак", "slug": "sapkowski_witcher"},
+    {"author": "Вера Камша", "series_id": 924954, "name_hint": "Отблески Этерны. Красный", "slug": "kamsha_eterna_red"},
 ]
 
 
@@ -334,7 +336,7 @@ async def main_async(args: argparse.Namespace) -> int:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--out", default="cross-author-series-results")
-    p.add_argument("--max-requests", type=int, default=20)
+    p.add_argument("--max-requests", type=int, default=24)
     return asyncio.run(main_async(p.parse_args()))
 
 
