@@ -1,0 +1,58 @@
+name: live-foundation-probe
+
+on:
+  push:
+    branches:
+      - live-foundation-probe
+    paths:
+      - "scripts/live_foundation_probe.py"
+      - ".github/workflows/live-foundation-probe.yml"
+      - "src/litres_parser/**"
+  workflow_dispatch:
+
+jobs:
+  live-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install parser
+        run: python -m pip install -e .
+
+      - name: Run bounded LitRes Foundation probe
+        run: python scripts/live_foundation_probe.py --out live-results --max-requests 30
+
+      - name: Print compact report
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("live-results/report.json")
+          if not p.exists():
+              print("report.json was not produced")
+              raise SystemExit(0)
+          r = json.loads(p.read_text(encoding="utf-8"))
+          print(json.dumps({
+              "hypotheses": r.get("hypotheses"),
+              "requests": r.get("requests"),
+              "search": r.get("endpoints", {}).get("search"),
+              "facets": r.get("endpoints", {}).get("facets"),
+              "series": r.get("endpoints", {}).get("series"),
+              "genres": r.get("endpoints", {}).get("genres"),
+              "warnings": r.get("warnings"),
+          }, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload live probe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: litres-foundation-live-probe
+          path: live-results/
+          retention-days: 14
