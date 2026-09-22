@@ -9,6 +9,8 @@ from .client import (
     LitResFacetsPage,
 )
 from .crawler import CrawlResult, LitResCatalogCrawler
+from .postgres_catalog import PostgresCatalog
+from .storage import CatalogRepository, create_catalog
 from .series import LitResSeriesResolver
 
 __all__ = [
@@ -23,6 +25,9 @@ __all__ = [
     "LitResClient",
     "LitResFacetsPage",
     "LitResSeriesResolver",
+    "PostgresCatalog",
+    "CatalogRepository",
+    "create_catalog",
     "SeriesNotFoundError",
     "authors_from_art",
     "normalize_key",
