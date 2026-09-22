@@ -67,10 +67,12 @@ class LitResClient:
         timeout_seconds: float = 20.0,
         user_agent: str = "litres-parser/0.1",
         language: str = "ru",
+        retry_backoff_seconds: float = 0.75,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.api_base_url = api_base_url.rstrip("/")
         self.delay_seconds = max(0.0, float(delay_seconds))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self._last_request = 0.0
         self._lock = asyncio.Lock()
         self._client = httpx.AsyncClient(
@@ -113,14 +115,14 @@ class LitResClient:
                 if response.status_code == 404:
                     return None
                 if response.status_code in RETRY_STATUSES and attempt < 3:
-                    await asyncio.sleep(0.75 * (attempt + 1))
+                    await asyncio.sleep(self.retry_backoff_seconds * (attempt + 1))
                     continue
                 response.raise_for_status()
                 return response.json()
             except (httpx.HTTPError, ValueError) as exc:
                 last_exc = exc
                 if attempt < 3:
-                    await asyncio.sleep(0.75 * (attempt + 1))
+                    await asyncio.sleep(self.retry_backoff_seconds * (attempt + 1))
                     continue
         raise RuntimeError(f"LitRes request failed for {path}: {last_exc}")
 
